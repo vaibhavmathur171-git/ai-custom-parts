@@ -58,6 +58,12 @@ def make_bottle_holder(params: BottleHolderParams) -> Part:
     """
     Generate a bottle holder solid from parameters.
 
+    Coordinate convention:
+        +Z is up. Cup axis runs along Z, with the open end at +Z and the
+        drainage hole at z=0. The clamp axis runs along Y (horizontal),
+        perpendicular to the cup. The standoff arm runs along +X from
+        the cup wall to the clamp.
+
     Args:
         params: BottleHolderParams instance with geometry parameters
 
@@ -67,79 +73,75 @@ def make_bottle_holder(params: BottleHolderParams) -> Part:
     Raises:
         ValueError: if parameters fail validation
     """
-    # Validate parameters
     errors = params.validate()
     if errors:
         raise ValueError("Parameter validation failed:\n" + "\n".join(f"  - {e}" for e in errors))
 
-    # Calculate derived dimensions
     cup_od = params.cup_id + 2 * params.wall_t
     clamp_od = params.bar_dia + 2 * params.wall_t
 
-    # Region 1: Cup - hollow cylinder with closed bottom and drainage hole
+    # Layout: cup centered on Z axis at origin; clamp centered along Y axis
+    # at (clamp_x, 0, arm_z); arm bridges cup outer wall to clamp outer wall.
+    arm_z = params.cup_height / 2
+    clamp_x = cup_od / 2 + params.standoff + clamp_od / 2
+
+    # Small overlap so boolean union is clean even with curved interfaces.
+    overlap = 1.0
+
+    # Region 1: Cup — hollow cylinder, closed bottom, drainage hole at z=0.
     with BuildPart() as cup_part:
-        # Outer cylinder
-        with BuildSketch():
+        with BuildSketch(Plane.XY):
             Circle(cup_od / 2)
         extrude(amount=params.cup_height)
 
-        # Hollow out the interior
+        # Hollow the interior, leaving a floor of thickness wall_t.
         with BuildSketch(Plane.XY.offset(params.wall_t)):
             Circle(params.cup_id / 2)
         extrude(amount=params.cup_height - params.wall_t, mode=Mode.SUBTRACT)
 
-        # Add drainage hole through the bottom
+        # Drainage hole through the floor.
         with BuildSketch(Plane.XY):
             Circle(params.drain_dia / 2)
         extrude(amount=params.wall_t, mode=Mode.SUBTRACT)
 
     cup = cup_part.part
 
-    # Region 2: Standoff arm - rectangular bridge
-    # Position: connects at midpoint of cup's outer wall, extends horizontally
-    # The arm extends from the edge of the cup to the edge of the clamp
-    arm_length = params.standoff + cup_od / 2 + clamp_od / 2
-    arm_start_x = cup_od / 2
-    arm_center_z = params.cup_height / 2
+    # Region 2: Clamp — C-ring with axis along Y.
+    # Sketch the C profile in the XZ plane, then extrude symmetrically along Y.
+    # Slot is on the +X face of the clamp (the side facing AWAY from the cup).
+    with BuildPart() as clamp_part:
+        with BuildSketch(Plane.XZ):
+            Circle(clamp_od / 2)
+            Circle(params.bar_dia / 2, mode=Mode.SUBTRACT)
+            # Vertical slot through the +X wall: width slot_width along Z (vertical),
+            # length clamp_od along X (cuts cleanly through the wall).
+            with Locations((clamp_od / 2, 0)):
+                Rectangle(clamp_od, params.slot_width, mode=Mode.SUBTRACT)
+        extrude(amount=params.clamp_height / 2, both=True)
+
+    # Place clamp so its axis is along Y at (clamp_x, *, arm_z).
+    clamp = clamp_part.part.moved(Location((clamp_x, 0, arm_z)))
+
+    # Region 3: Standoff arm — vertical rib bridging cup outer wall to clamp.
+    # Length along X, width (height) along Z, thickness along Y.
+    arm_x_start = cup_od / 2 - overlap
+    arm_x_end = clamp_x - clamp_od / 2 + overlap
+    arm_length = arm_x_end - arm_x_start
+    arm_x_center = (arm_x_start + arm_x_end) / 2
 
     with BuildPart() as arm_part:
-        with BuildSketch(Plane.XZ.offset(0)):
-            with Locations((arm_start_x + params.standoff / 2, arm_center_z)):
-                Rectangle(params.standoff, params.arm_width)
-        extrude(amount=params.wall_t, both=True)
+        with BuildSketch(Plane.XZ):
+            with Locations((arm_x_center, arm_z)):
+                Rectangle(arm_length, params.arm_width)
+        extrude(amount=params.wall_t / 2, both=True)
 
     arm = arm_part.part
 
-    # Region 3: Clamp - C-shaped ring with slot
-    # Center the clamp at the end of the standoff arm
-    clamp_center_x = arm_start_x + params.standoff
-    clamp_center_z = arm_center_z
-
-    with BuildPart() as clamp_part:
-        # Create the clamp at origin first
-        with BuildSketch(Plane.XY):
-            Circle(clamp_od / 2)
-            Circle(params.bar_dia / 2, mode=Mode.SUBTRACT)
-
-            # Cut the slot - positioned opposite to the standoff (at -X direction)
-            with Locations((-clamp_od / 2, 0)):
-                Rectangle(params.slot_width, clamp_od, mode=Mode.SUBTRACT)
-
-        extrude(amount=params.clamp_height)
-
-    clamp = clamp_part.part
-
-    # Boolean union all three regions with proper positioning
+    # Boolean union all three regions.
     with BuildPart() as final:
         add(cup)
         add(arm)
-        # Position clamp at the end of standoff, centered with arm vertically
-        clamp_positioned = clamp.moved(
-            Location(
-                (clamp_center_x, 0, clamp_center_z - params.clamp_height / 2)
-            )
-        )
-        add(clamp_positioned)
+        add(clamp)
 
     return final.part
 
@@ -163,7 +165,7 @@ def main():
 
     # Export to STL
     output_path = output_dir / "bottle_holder.stl"
-    part.export_stl(str(output_path))
+    export_stl(part, str(output_path))
 
     # Report file size
     file_size = output_path.stat().st_size
@@ -176,3 +178,19 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# Registry metadata. Read by templates.registry to wire this template into the app.
+META = {
+    "name": "bottle_holder",
+    "description": (
+        "Cylindrical cup that mounts to a horizontal bar via a C-clamp. "
+        "Holds a bottle vertically with a drainage hole in the floor."
+    ),
+    "typical_use_cases": [
+        "Drink holder for a child's ride-on toy",
+        "Bottle holder for a treadmill handlebar",
+        "Stroller cup holder",
+        "Gym equipment bottle accessory",
+    ],
+}
