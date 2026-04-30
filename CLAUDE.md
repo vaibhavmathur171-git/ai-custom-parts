@@ -2,9 +2,9 @@
 
 ## Mission
 
-A web app where someone describes a real-world problem in plain English, has a short conversation with an AI that asks engineer-grade follow-up questions, and gets back a 3D-printable file (STL) and a CAD-grade file (STEP) for a parametric solid that actually solves the problem. Manufacturing constraints are checked deterministically before the file is offered for download.
+A web app where someone describes a real-world problem in plain English (optionally with a photo or sketch), has a short conversation with an AI that asks engineer-grade follow-up questions, and gets back a 3D-printable file (STL) and a CAD-grade file (STEP) for a parametric solid that actually solves the problem. Manufacturing constraints are checked deterministically before the file is offered for download.
 
-Hero demo: a custom bottle holder for a child's Power Wheels-class ride-on car.
+The wedge is **mounting and holding solutions for everyday objects** — clamps, brackets, hooks, holders. The hero demo is a custom bottle holder for a child's Power Wheels-class ride-on car.
 
 ## Target user
 
@@ -12,7 +12,7 @@ Someone who has a specific physical problem in their home and would never instal
 
 ## Hard architectural rule
 
-**The LLM does not generate geometry code.** The LLM's job is to behave as a smart product engineer doing structured intake — asking the right questions, extracting structured parameters from the user's responses, and calling deterministic, hand-tuned geometry functions.
+**The LLM does not generate geometry code.** The LLM's job is to behave as a smart product engineer doing structured intake — listening to the user's problem, identifying which template fits, asking the right parameter questions, extracting structured parameters from the user's responses, and calling deterministic, hand-tuned geometry functions.
 
 Geometry functions are hand-coded by humans, version-controlled, and tested. The LLM selects which template to use and what parameter values to pass. It does not write `build123d` code at runtime.
 
@@ -23,9 +23,9 @@ This is non-negotiable. It is the architectural choice that makes the system rel
 - Python 3.11+
 - `build123d` for parametric solid geometry (B-Rep, OpenCascade backend)
 - `streamlit` for the web UI
-- `anthropic` Python SDK for the LLM intake layer
-- `streamlit-stl` or embedded `<model-viewer>` for browser rendering
-- Use `claude-opus-4-7` model string (Claude Opus 4.7) for the conversation agent
+- `streamlit-stl` for inline 3D rendering in the browser
+- `anthropic` Python SDK for the LLM intake layer (Sonnet 4.5/4.6 for chat with vision; Opus is too slow and expensive for conversational use)
+- `python-dotenv` for loading API keys from .env
 
 Avoid heavy dependencies. No Docker, no databases, no cloud services. Everything runs locally. Streamlit Cloud is the deploy target.
 
@@ -33,146 +33,181 @@ Avoid heavy dependencies. No Docker, no databases, no cloud services. Everything
 
 ```
 cad-design-ai/
-├── CLAUDE.md                    # this file
-├── README.md                    # human-facing project overview
+├── CLAUDE.md
+├── README.md
 ├── requirements.txt
-├── .env.example                 # ANTHROPIC_API_KEY placeholder
+├── .env.example
 ├── .gitignore
-├── app.py                       # Streamlit entry point
+├── app.py
 ├── conversation/
 │   ├── __init__.py
-│   ├── agent.py                 # Claude API wrapper, conversation state
-│   └── system_prompt.py         # the engineer-personality prompt
+│   ├── agent.py
+│   └── system_prompt.py
 ├── templates/
 │   ├── __init__.py
-│   ├── registry.py              # template name → function mapping
-│   └── bottle_holder.py         # the hero template
+│   ├── registry.py
+│   ├── bottle_holder.py
+│   ├── hook.py
+│   └── bracket.py
 ├── manufacturing/
 │   ├── __init__.py
-│   ├── checks.py                # wall thickness, overhang, drain
-│   └── export.py                # STL + STEP export wrappers
+│   ├── checks.py
+│   └── export.py
 ├── viewer/
-│   └── render.py                # solid → GLB or STL for browser
+│   └── render.py
 └── tests/
-    └── test_bottle_holder.py    # geometry sanity tests
+    └── test_templates.py
 ```
 
 ## Build sequence
 
-Work through these in order. Do not jump ahead. Each step ends with a runnable artifact.
+### Step 1 — Hand-coded bottle holder ✅ DONE
+`templates/bottle_holder.py` with `make_bottle_holder(params)`. Validates parameters, exports STL.
 
-### Step 1 — Hand-coded bottle holder (no AI yet)
-Implement `templates/bottle_holder.py` with a single function `make_bottle_holder(params: BottleHolderParams) -> Part` returning a `build123d` solid. Parameters are dataclass-defined.
+### Step 2A — Streamlit shell with sliders for bottle holder ✅ DONE
+`app.py` with parameter sliders. Cup vertical, clamp horizontal. Validation surfaces as errors. STL renders inline.
 
-Acceptance: running `python -m templates.bottle_holder` writes `output/bottle_holder.stl` with sensible defaults, viewable in any STL viewer.
+### Step 2B — Template registry and library expansion (CURRENT)
+Refactor `templates/` into a proper registry. Add two new templates: `hook.py` and `bracket.py`. Each template defines:
+- A dataclass for its parameters (e.g., `HookParams`, `BracketParams`)
+- A geometry function (e.g., `make_hook(params)`, `make_bracket(params)`)
+- A `validate()` method on the params class
+- A `meta` dict with `name`, `description`, `typical_use_cases`, `default_params`
 
-### Step 2 — Streamlit shell with sliders (no AI yet)
-Build `app.py` with the parameter sliders directly bound to the bottle holder function. Render the resulting STL inline.
+Update `templates/registry.py` to register all three templates with metadata. Provide a function `get_template(name)` returning the geometry function and parameter class.
 
-Acceptance: `streamlit run app.py` shows a working parametric configurator. Dragging sliders updates the 3D model in under 2 seconds.
+Update `app.py`:
+- Add a template selector at the top of the sidebar (radio or dropdown).
+- The parameter slider panel updates dynamically based on the selected template.
+- The 3D viewer renders whichever template is currently active.
+- Validation, STL download, and metadata panel all work for any selected template.
 
-### Step 3 — Conversation agent
-Implement `conversation/agent.py`. Claude is prompted with the engineer-personality system prompt. It asks questions, builds up a parameter dict, and emits a structured JSON object when ready to generate. The Streamlit chat UI replaces the sliders.
+Acceptance: a user can pick any of the three templates from the dropdown, drag sliders specific to that template, and see a valid 3D model render. All three templates produce valid STL files at default parameters.
 
-Acceptance: a user can type "I need a bottle holder for my daughter's Power Wheels" and the agent walks them through measurement questions and produces a generated solid.
+### Step 3 — Conversation agent with template routing
+Implement `conversation/agent.py`. The agent's job is to route the user to the correct template and then collect parameters for it.
+
+Two-phase conversation:
+1. **Routing phase**: The agent identifies which template fits the user's stated problem. If it can't tell from the initial message, it asks one clarifying question about what they're trying to mount/hold/hang.
+2. **Parameter phase**: Once a template is selected, the agent asks template-specific measurement questions one at a time, never skipping ahead.
+
+Input supports text and images. Images are context only (Mode A) — the agent looks at uploaded photos or sketches to understand intent and ask better questions, but never extracts dimensions visually. Mode B (dimension extraction from images) is explicitly out of scope.
+
+The agent emits a structured tool call when ready: `{"template": "bottle_holder", "params": {...}}`. The Streamlit app routes this to the geometry function and renders the result.
+
+The chat interface replaces the slider panel as the primary UI. Sliders remain accessible behind a "show parameters" toggle for power users and debugging.
 
 ### Step 4 — Manufacturing checks + STEP export
-Implement `manufacturing/checks.py` with:
-- `min_wall_thickness(part, threshold=1.0)` — flags faces too thin to print
-- `has_drain(part)` — confirms drainage feature exists for a cup
+Each template can specify which checks apply. Common checks:
+- `min_wall_thickness(part, threshold)` — flags faces too thin to print
 - `check_overhangs(part, max_angle=45)` — for FDM printability
+- Template-specific checks declared in template metadata
 
-Implement `manufacturing/export.py` with STL and STEP export. Surface check results in the Streamlit sidebar. Add download buttons for both formats.
+STL and STEP export both available as download buttons after generation.
 
-Acceptance: after generation, the user sees pass/warn/fail indicators and can download both file types.
+### Step 5 — Roadmap UI + polish
+Add a "Coming next" section to the sidebar listing future templates as greyed-out cards with brief descriptions. Examples: drawer organizer, knob, plant pot insert, cable clip, phone mount, license plate. Clicking a future template shows a "this template is in development" message.
 
-### Step 5 — Template registry + iteration loop
-Refactor `templates/registry.py` so templates are registered by name with metadata (description, parameter schema, default values). The agent selects from the registry. After initial generation, the user can iterate: "make the cup deeper" or "design one for a 38mm bar instead" — the same parameters update, no regeneration from scratch.
+This is *not* functional code — it's narrative UI that demonstrates the platform vision.
 
-Acceptance: at least one round-trip iteration where the user modifies dimensions through chat, the model updates, parameters persist.
+Final polish: README, deploy to Streamlit Cloud.
 
-### Step 6 — Polish, demo video, docs
-PRD (1-2 pages), TDD (1-2 pages), 90-second screen recording, README. Deploy to Streamlit Cloud.
+### Step 6 — Documentation
+PRD (1-2 pages), TDD (1-2 pages), 90-second demo video.
 
-## Bottle holder template specification
+## Template specifications
 
-This is the hero template. Implement it precisely.
+### Template 1: Bottle Holder ✅ Implemented
 
-### Geometry
+Mounts a cylindrical bottle to a horizontal bar via a clamp. See `templates/bottle_holder.py`.
 
-A clamp-on bottle holder with three regions:
+Parameters: bottle_dia, cup_id, cup_height, wall_t, drain_dia, bar_dia, clamp_height, slot_width, standoff, arm_width.
 
-1. **Cup**: hollow cylindrical sleeve. Inner diameter `cup_id`, outer diameter `cup_id + 2 * wall_t`, height `cup_height`. Closed bottom with a drainage hole of diameter `drain_dia` centered on the floor.
+Typical use cases: drink holder for ride-on toys, treadmill bottle holder, stroller cup holder, gym equipment accessory.
 
-2. **Standoff arm**: a horizontal rectangular bridge connecting the cup wall to the clamp. Length `standoff`, width `arm_width` (default 20mm), thickness `wall_t`. Connects at the midpoint of the cup's outer wall, perpendicular to the cup axis.
+### Template 2: Hook (TO IMPLEMENT)
 
-3. **Clamp**: a C-shaped ring with inner diameter `bar_dia`, outer diameter `bar_dia + 2 * wall_t`, height `clamp_height` (default 25mm). The C has a vertical slot of width `slot_width` (default 4mm) on the side opposite the standoff. A small lateral channel through both ends of the C accepts a zip tie or M4 bolt for tightening.
+A J-shaped hook that mounts to either a flat surface (with screw holes) or to a bar (with a clamp like the bottle holder's). Holds an object that hangs from it.
 
-Boolean union the three regions into a single solid.
+**Geometry:**
+- A mounting plate or clamp (user picks at parameter time)
+- An arm extending outward (length: `arm_length`)
+- A J-curve at the end (radius `hook_radius`, opening width `opening`) holding the hung object
 
-### Parameters
-
+**Parameters:**
 | Name | Type | Default | Description |
 |---|---|---|---|
-| `bottle_dia` | float | 63.0 | Bottle diameter in mm (the 2.5" Thermos) |
-| `cup_id` | float | 66.0 | Cup inner diameter (bottle_dia + 3mm clearance) |
-| `cup_height` | float | 100.0 | Cup height — grips bottom 40% of a 230mm bottle |
-| `wall_t` | float | 2.5 | Wall thickness, FDM-friendly |
-| `drain_dia` | float | 8.0 | Drainage hole in cup floor |
-| `bar_dia` | float | 28.0 | Roll bar diameter (Bronco Raptor toy default) |
-| `clamp_height` | float | 25.0 | Vertical extent of the clamp |
-| `slot_width` | float | 4.0 | Tightening slot width |
-| `standoff` | float | 40.0 | Cup-to-clamp horizontal gap |
-| `arm_width` | float | 20.0 | Standoff arm cross-section width |
+| `mount_type` | str | "flat" | Either "flat" (screw holes) or "bar" (clamp) |
+| `mount_dim` | float | 30.0 | If flat: plate width/height; if bar: bar diameter |
+| `arm_length` | float | 50.0 | How far the hook sticks out from mount |
+| `hook_radius` | float | 12.0 | Inside radius of the J-curve |
+| `opening` | float | 18.0 | Gap at the J-curve opening |
+| `wall_t` | float | 3.0 | Stock thickness throughout |
+| `screw_dia` | float | 4.5 | If flat mount, screw hole diameter (for #8 screws) |
 
-### Validation rules
+**Typical use cases:** hang a broom, headphones holder, dog leash hook, key hook, plant hanger, towel hook.
 
-- `cup_id > bottle_dia + 1.0` (mm clearance, refuse otherwise)
-- `wall_t >= 1.0` (printability floor; warn if below 1.5)
-- `bar_dia >= 15.0 and bar_dia <= 60.0` (sanity range)
-- `cup_height >= 40.0` (otherwise no meaningful grip)
+### Template 3: L-Bracket (TO IMPLEMENT)
+
+A right-angle bracket that joins two perpendicular surfaces. Used for shelf supports, corner reinforcements, mounting electronics.
+
+**Geometry:**
+- Two flat plates meeting at 90 degrees
+- Each plate has a configurable number of mounting holes
+- Optional triangular gusset between the plates for stiffness
+
+**Parameters:**
+| Name | Type | Default | Description |
+|---|---|---|---|
+| `plate_a_length` | float | 60.0 | Length of first plate |
+| `plate_a_width` | float | 30.0 | Width of first plate |
+| `plate_b_length` | float | 60.0 | Length of second plate |
+| `plate_b_width` | float | 30.0 | Width of second plate |
+| `thickness` | float | 4.0 | Plate thickness |
+| `holes_a` | int | 2 | Number of mounting holes in plate A |
+| `holes_b` | int | 2 | Number of mounting holes in plate B |
+| `hole_dia` | float | 4.5 | Mounting hole diameter |
+| `gusset` | bool | True | Whether to add a stiffening gusset |
+
+**Typical use cases:** shelf bracket, monitor mount, under-desk cable bracket, joining wood pieces, reinforcing a corner.
 
 ## Conversation design
 
 The agent's persona: a senior product engineer at a hardware company doing intake on a custom request. Curious, focused, asks one clear question at a time, never lectures, never asks for information already given.
 
-The system prompt should:
-- Define the engineer persona
-- Describe the available templates from the registry (start with bottle_holder only)
-- Specify the structured parameter schema the agent must produce when ready
-- Instruct the agent to ask for measurements explicitly and never invent dimensions
-- Allow the agent to suggest typical values ("most ride-on toys have 25-30mm roll bars — does that sound right for yours?") to reduce user friction
-- Tell the agent to summarize the parameter set before generating ("Here's what I'm building: cup ID 66mm, cup height 100mm, clamping to a 28mm bar. Generate?")
-- After generation, accept iterative edits and update the parameter dict in place — never restart the conversation
+The system prompt covers:
+- Engineer persona and conversation style.
+- Brief description of each available template and when each fits.
+- Routing logic for handling ambiguity ("sounds like either a hook or a bracket — what's the orientation of the surface you're mounting to?").
+- Parameter intake rules per template (only ask for parameters that exist for the chosen template).
+- Image handling: acknowledge what's visible, never invent dimensions, always ask measurements explicitly.
+- Confirmation pattern: summarize the parameter set before generating.
+- Iteration handling: after generation, accept changes ("make it deeper") and update the parameter dict in place.
 
-The agent communicates with the geometry layer via a structured JSON tool call. Define the tool schema in `conversation/agent.py`.
+The agent communicates with the geometry layer via a structured tool call:
+```json
+{
+  "template": "bottle_holder | hook | bracket",
+  "params": { ... template-specific parameter values ... }
+}
+```
+
+The app validates the tool call before execution: template must exist, params must match the template's schema, validation must pass.
 
 ## Engineering principles for the agent
 
-When working in this repository:
-
-- **Small commits.** Each meaningful change in its own commit with a clear message.
-- **Test geometry before claiming done.** Every template change must produce a valid STL that opens in a viewer. Don't trust that build123d succeeded — verify the file exists and has nonzero size.
-- **Never let LLM output reach the geometry layer unchecked.** The conversation agent emits structured parameters; those parameters are validated against the template's schema before being passed to the geometry function. Validation failures should be surfaced back to the user as clarifying questions, not as crashes.
-- **Prefer clarity over cleverness.** A geometry function with explicit named variables and comments is better than a compact one-liner. Future humans (and this Vaibhav) will read this code.
-- **Surface failure modes.** If wall thickness is borderline, say so visibly. Do not hide warnings.
-- **No silent fallbacks.** If the template registry is asked for a template it doesn't have, raise. Do not "best-effort" generate something else.
+- **Small commits.** Each meaningful change in its own commit.
+- **Test geometry before claiming done.** Every template change must produce a valid STL that opens in a viewer.
+- **Never let LLM output reach the geometry layer unchecked.**
+- **Each template is self-contained.** A new template doesn't require modifying existing ones.
+- **Prefer clarity over cleverness.**
+- **Surface failure modes.**
+- **No silent fallbacks.** If a template doesn't exist, raise; don't silently substitute.
 
 ## Known constraints and non-goals
 
-- **Not a general-purpose CAD tool.** The system handles only registered templates. Adding a new template requires hand-coding it. This is a feature, not a bug.
-- **Photos are context, not measurement source.** Users can paste photos into the chat for the agent to see; the agent uses them to ask better questions, not to extract dimensions automatically.
-- **Single-user, single-session.** No accounts, no persistence, no collaboration. Out of scope.
-- **English only.** Out of scope for this build.
-
-## First task
-
-When invoked, your first action is Step 1. Specifically:
-
-1. Create the directory structure above (empty files where appropriate, populated `.gitignore` and `requirements.txt`).
-2. Implement `templates/bottle_holder.py` end-to-end with the spec above.
-3. Add a `__main__` block that, when the module is run directly, generates an STL file at `output/bottle_holder.stl` using the default parameter values.
-4. Run it. Confirm the file exists and is nonzero. Report the file size.
-5. Stop and report. Do not proceed to Step 2 until the human reviews the STL.
-
-Do not guess at build123d API. If you are uncertain about a function signature, check the build123d documentation (https://build123d.readthedocs.io/) before writing code.
+- **Three templates in this build.** More templates are roadmap, not deliverable.
+- **Photos are context, not measurement source.** Mode A only.
+- **Single-user, single-session.** No accounts, no persistence.
+- **English only.**
+- **The library scales by adding templates, each hand-coded.** This is intentional design — every template encodes design-for-manufacture expertise that black-box generation can't match.
