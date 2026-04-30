@@ -1,21 +1,27 @@
 """
-Streamlit configurator for the parametric CAD template library.
+Streamlit configurator — chat-first.
 
-A template selector at the top of the sidebar picks which model is active.
-The slider panel, the 3D viewer, the validation errors, and the metadata
-panel all dispatch on the selected template. No AI yet — that's Step 3.
+Primary UI: a conversation with the intake agent. The agent routes the
+user to a template, gathers parameters, and calls generate_part. The 3D
+viewer shows whichever part was most recently produced — by the agent OR
+by the manual-mode sliders in the sidebar.
+
+Manual mode is a power-user / debug surface and is collapsed by default.
 """
 
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict
+from io import BytesIO
 from pathlib import Path
 
 import streamlit as st
 from build123d import export_stl
 from streamlit_stl import stl_from_file
 
+from conversation.agent import Agent, GeneratedPart
 from templates.bottle_holder import BottleHolderParams
 from templates.bracket import BracketParams
 from templates.hook import HookParams
@@ -30,24 +36,13 @@ TEMPLATE_LABELS = {
     "bracket": "L-bracket",
 }
 
+ACCEPTED_IMAGE_TYPES = ["png", "jpg", "jpeg", "webp", "gif"]
 
-@st.cache_data(show_spinner=False)
-def generate_preview(template_name: str, params_json: str) -> tuple[str, int]:
-    """Build the part for the given template + params and write a preview STL.
 
-    Cached on (template_name, params_json) so dragging a slider back to a
-    prior value is instant. params_json is a sort-keyed JSON dump of the
-    params dataclass so the cache key is stable.
-    """
-    spec = get_template(template_name)
-    params_dict = json.loads(params_json)
-    params = spec.params_class(**params_dict)
-    part = spec.make_fn(params)
-
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    out_path = OUTPUT_DIR / f"{template_name}_preview.stl"
-    export_stl(part, str(out_path))
-    return str(out_path), out_path.stat().st_size
+# ---------------------------------------------------------------------------
+# Manual-mode sliders (carryover from Step 2B). These render template-specific
+# parameter widgets inside the sidebar expander.
+# ---------------------------------------------------------------------------
 
 
 def _bottle_holder_sliders(defaults: BottleHolderParams) -> BottleHolderParams:
@@ -95,12 +90,11 @@ def _hook_sliders(defaults: HookParams) -> HookParams:
         screw_dia = st.slider("Screw hole diameter (mm)", 2.0, 8.0, defaults.screw_dia, 0.1)
     else:
         mount_dim = st.slider("Bar diameter (mm)", 15.0, 60.0, min(max(defaults.mount_dim, 15.0), 60.0), 0.5)
-        screw_dia = defaults.screw_dia  # unused for bar mount
+        screw_dia = defaults.screw_dia
 
     st.subheader("Arm & curve")
     arm_length = st.slider("Arm length (mm)", 10.0, 150.0, defaults.arm_length, 1.0)
     hook_radius = st.slider("Hook inside radius (mm)", 4.0, 40.0, defaults.hook_radius, 0.5)
-    # Opening must remain < 2 * hook_radius for the J to curl back.
     max_opening = max(2 * hook_radius - 0.5, 1.0)
     opening = st.slider(
         "Opening at the J mouth (mm)",
@@ -193,77 +187,254 @@ METRIC_DISPATCH = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Session state helpers
+# ---------------------------------------------------------------------------
+
+
+def _ensure_session_state():
+    if "chat_log" not in st.session_state:
+        st.session_state.chat_log = []
+    if "current" not in st.session_state:
+        # current = dict(template_name, params_dict, stl_path, file_size, source)
+        # source ∈ {"agent", "manual"}; updated on every successful generation.
+        st.session_state.current = None
+    if "agent_error" not in st.session_state:
+        st.session_state.agent_error = None
+    if "agent" not in st.session_state:
+        try:
+            st.session_state.agent = Agent(output_dir=OUTPUT_DIR)
+        except Exception as exc:
+            st.session_state.agent = None
+            st.session_state.agent_error = str(exc)
+
+
+def _record_generation(template_name: str, params, stl_path: Path, file_size: int, source: str):
+    st.session_state.current = {
+        "template_name": template_name,
+        "params_dict": asdict(params),
+        "stl_path": str(stl_path),
+        "file_size": file_size,
+        "source": source,
+        "ts": time.time(),
+    }
+
+
+def _generate_manual(template_name: str, params) -> tuple[Path, int]:
+    """Build a part from manual sliders and write it to disk."""
+    spec = get_template(template_name)
+    part = spec.make_fn(params)
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    stl_path = OUTPUT_DIR / f"{template_name}_manual.stl"
+    export_stl(part, str(stl_path))
+    return stl_path, stl_path.stat().st_size
+
+
+# ---------------------------------------------------------------------------
+# Page setup
+# ---------------------------------------------------------------------------
+
+
 st.set_page_config(page_title="Parametric CAD Configurator", layout="wide")
+_ensure_session_state()
+
 st.title("Parametric CAD Configurator")
 st.caption(
-    "Pick a template, drag sliders to update the parametric model, and "
-    "download an STL ready to print."
+    "Describe what you need to build. The intake agent will ask a few "
+    "questions and produce a printable STL."
 )
+
+# ---------------------------------------------------------------------------
+# Sidebar: manual mode + view options
+# ---------------------------------------------------------------------------
 
 specs = list_templates()
 spec_by_name = {s.name: s for s in specs}
 
 with st.sidebar:
-    st.header("Template")
-    selected_name = st.radio(
-        "Choose a template",
-        options=[s.name for s in specs],
-        format_func=lambda n: TEMPLATE_LABELS.get(n, n),
-        label_visibility="collapsed",
-    )
-    spec = spec_by_name[selected_name]
-    st.caption(spec.description)
-
-    st.header("Parameters")
-    params = SLIDER_DISPATCH[selected_name](spec.default_params)
-
     st.header("View")
     color = st.color_picker("Color", "#3a86ff")
     auto_rotate = st.toggle("Auto-rotate", value=False)
 
-errors = params.validate()
-if errors:
-    st.error("Parameter validation failed:")
-    for e in errors:
-        st.write(f"- {e}")
-    st.stop()
-
-try:
-    params_json = json.dumps(asdict(params), sort_keys=True)
-    stl_path, file_size = generate_preview(selected_name, params_json)
-except Exception as exc:
-    st.error(f"Geometry generation failed: {exc}")
-    st.stop()
-
-viewer_col, info_col = st.columns([3, 1])
-
-with viewer_col:
-    stl_from_file(
-        file_path=stl_path,
-        color=color,
-        material="material",
-        auto_rotate=auto_rotate,
-        opacity=1,
-        height=600,
-        cam_distance=0,
-    )
-
-with info_col:
-    st.metric("STL size", f"{file_size / 1024:.1f} KB")
-    METRIC_DISPATCH[selected_name](params)
-
-    with open(stl_path, "rb") as f:
-        st.download_button(
-            label="Download STL",
-            data=f,
-            file_name=f"{selected_name}.stl",
-            mime="model/stl",
-            use_container_width=True,
+    with st.expander("Manual mode (override sliders)", expanded=False):
+        st.caption(
+            "Drive the geometry directly with sliders. Use this to "
+            "fine-tune or test outside the conversation."
         )
 
-    with st.expander("Typical use cases"):
-        for use_case in spec.typical_use_cases:
-            st.write(f"- {use_case}")
+        manual_template = st.radio(
+            "Template",
+            options=[s.name for s in specs],
+            format_func=lambda n: TEMPLATE_LABELS.get(n, n),
+            key="manual_template",
+        )
+        manual_spec = spec_by_name[manual_template]
+        manual_params = SLIDER_DISPATCH[manual_template](manual_spec.default_params)
 
-    with st.expander("Parameter dump"):
-        st.json(asdict(params))
+        manual_errors = manual_params.validate()
+        if manual_errors:
+            st.error("Manual params invalid:")
+            for e in manual_errors:
+                st.write(f"- {e}")
+
+        if st.button("Apply manual params to viewer", disabled=bool(manual_errors)):
+            try:
+                stl_path, file_size = _generate_manual(manual_template, manual_params)
+                _record_generation(manual_template, manual_params, stl_path, file_size, "manual")
+                st.success(f"Applied {TEMPLATE_LABELS[manual_template]} from manual sliders.")
+            except Exception as exc:
+                st.error(f"Manual generation failed: {exc}")
+
+    if st.button("Reset conversation"):
+        if st.session_state.agent is not None:
+            st.session_state.agent.reset()
+        st.session_state.chat_log = []
+        st.session_state.current = None
+        st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Main area: chat (left), viewer + info (right)
+# ---------------------------------------------------------------------------
+
+if st.session_state.agent_error:
+    st.error(
+        "Conversation agent unavailable: "
+        f"{st.session_state.agent_error}\n\n"
+        "Manual mode (sidebar) still works. "
+        "Add ANTHROPIC_API_KEY to .env to enable chat."
+    )
+
+chat_col, viewer_col = st.columns([2, 1])
+
+with chat_col:
+    st.subheader("Conversation")
+
+    if not st.session_state.chat_log:
+        with st.chat_message("assistant"):
+            st.markdown(
+                "Hi — describe the problem you're trying to solve and I'll "
+                "find a template and gather what I need to make a part. "
+                "You can also attach a photo for context."
+            )
+
+    for entry in st.session_state.chat_log:
+        with st.chat_message(entry["role"]):
+            if entry.get("text"):
+                st.markdown(entry["text"])
+            for img_bytes in entry.get("images", []):
+                st.image(img_bytes, width=240)
+            if entry.get("generated"):
+                gen = entry["generated"]
+                st.success(
+                    f"✓ Generated **{TEMPLATE_LABELS.get(gen['template_name'], gen['template_name'])}** "
+                    f"({gen['file_size'] / 1024:.1f} KB)"
+                )
+            if entry.get("tool_failures"):
+                with st.expander("Validation feedback (sent back to agent)"):
+                    for fail in entry["tool_failures"]:
+                        st.code(fail, language="text")
+
+with viewer_col:
+    st.subheader("Preview")
+    current = st.session_state.current
+    if current is None:
+        st.info("No part generated yet. Start a conversation or use Manual mode.")
+    else:
+        try:
+            stl_from_file(
+                file_path=current["stl_path"],
+                color=color,
+                material="material",
+                auto_rotate=auto_rotate,
+                opacity=1,
+                height=420,
+                cam_distance=0,
+            )
+        except Exception as exc:
+            st.error(f"Viewer error: {exc}")
+
+        st.metric("STL size", f"{current['file_size'] / 1024:.1f} KB")
+        st.caption(
+            f"Source: **{current['source']}** · Template: "
+            f"**{TEMPLATE_LABELS.get(current['template_name'], current['template_name'])}**"
+        )
+
+        spec = spec_by_name[current["template_name"]]
+        params_obj = spec.params_class(**current["params_dict"])
+        METRIC_DISPATCH[current["template_name"]](params_obj)
+
+        with open(current["stl_path"], "rb") as f:
+            st.download_button(
+                label="Download STL",
+                data=f,
+                file_name=f"{current['template_name']}.stl",
+                mime="model/stl",
+                use_container_width=True,
+            )
+
+        with st.expander("Parameter dump"):
+            st.json(current["params_dict"])
+
+
+# ---------------------------------------------------------------------------
+# Chat input — page-level so it pins to the bottom
+# ---------------------------------------------------------------------------
+
+
+prompt = st.chat_input(
+    "Describe the problem (you can attach a photo for context)",
+    accept_file=True,
+    file_type=ACCEPTED_IMAGE_TYPES,
+    disabled=st.session_state.agent is None,
+)
+
+if prompt is not None:
+    text = (prompt.text or "").strip() if hasattr(prompt, "text") else str(prompt).strip()
+    raw_files = list(getattr(prompt, "files", []) or [])
+
+    image_payloads: list[tuple[str, bytes]] = []
+    image_bytes_for_display: list[bytes] = []
+    for f in raw_files:
+        data = f.read()
+        media_type = f.type or "image/png"
+        image_payloads.append((media_type, data))
+        image_bytes_for_display.append(data)
+
+    if not text and not image_payloads:
+        st.warning("Empty message — type something or attach an image.")
+    elif st.session_state.agent is None:
+        st.error("Agent unavailable; can't process chat. Use Manual mode.")
+    else:
+        st.session_state.chat_log.append(
+            {"role": "user", "text": text, "images": image_bytes_for_display}
+        )
+        try:
+            turn = st.session_state.agent.send(text, images=image_payloads)
+        except Exception as exc:
+            st.session_state.chat_log.append(
+                {
+                    "role": "assistant",
+                    "text": f"Sorry, the agent hit an error: `{exc}`",
+                    "images": [],
+                }
+            )
+            st.rerun()
+        else:
+            assistant_entry: dict = {
+                "role": "assistant",
+                "text": turn.text,
+                "images": [],
+            }
+            tool_failures = [a["message"] for a in turn.tool_attempts if not a["ok"]]
+            if tool_failures:
+                assistant_entry["tool_failures"] = tool_failures
+            if turn.generated_part is not None:
+                gp: GeneratedPart = turn.generated_part
+                assistant_entry["generated"] = {
+                    "template_name": gp.template_name,
+                    "file_size": gp.file_size,
+                }
+                _record_generation(gp.template_name, gp.params, gp.stl_path, gp.file_size, "agent")
+            st.session_state.chat_log.append(assistant_entry)
+            st.rerun()
