@@ -5,3 +5,8 @@ anthropic==0.97.0
 python-dotenv==1.2.2
 pytest==9.0.3
 Pillow==12.2.0
+# Used by manufacturing/visualize.py to render the red-highlight problem-
+# area thumbnails embedded in manufacturing-warning expanders. Not a hard
+# dep of anything else in this list, so it must be pinned explicitly.
+matplotlib==3.10.9
+numpy==2.4.4
