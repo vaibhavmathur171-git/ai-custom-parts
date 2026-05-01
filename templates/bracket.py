@@ -241,6 +241,8 @@ META = {
         "Reinforcing a wood-joinery corner",
         "Mounting a small project enclosure",
     ],
+    "applicable_checks": ["wall_thickness", "hole_edge"],
+    "wall_param": "thickness",
 }
 
 

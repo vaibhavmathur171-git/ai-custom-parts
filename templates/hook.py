@@ -254,6 +254,10 @@ META = {
         "Plant or wind chime hanger",
         "Broom or mop hook",
     ],
+    # Hole edge clearance only applies to the flat-mount variant; the
+    # orchestrator already conditions on params.mount_type.
+    "applicable_checks": ["wall_thickness", "overhangs", "hole_edge"],
+    "wall_param": "wall_t",
 }
 
 

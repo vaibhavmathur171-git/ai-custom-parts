@@ -31,6 +31,9 @@ class TemplateSpec:
     params_class: Type
     make_fn: Callable[[object], Part]
     default_params: object
+    # Manufacturing metadata.
+    applicable_checks: tuple[str, ...] = ()
+    wall_param: str | None = None
 
 
 def _spec(module, params_class, make_fn) -> TemplateSpec:
@@ -42,6 +45,8 @@ def _spec(module, params_class, make_fn) -> TemplateSpec:
         params_class=params_class,
         make_fn=make_fn,
         default_params=params_class(),
+        applicable_checks=tuple(meta.get("applicable_checks", ())),
+        wall_param=meta.get("wall_param"),
     )
 
 

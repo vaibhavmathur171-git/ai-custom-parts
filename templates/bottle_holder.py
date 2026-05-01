@@ -193,4 +193,10 @@ META = {
         "Stroller cup holder",
         "Gym equipment bottle accessory",
     ],
+    # Which manufacturing checks apply to this template. The orchestrator
+    # in manufacturing/checks.py uses this list to filter what runs.
+    "applicable_checks": ["wall_thickness", "overhangs", "drainage"],
+    # Which parameter holds the wall thickness (used by the agent's pushback
+    # logic and by wall_thickness_from_value).
+    "wall_param": "wall_t",
 }

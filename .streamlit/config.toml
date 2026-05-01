@@ -1,0 +1,14 @@
+# Streamlit theme — light, professional CAD aesthetic.
+# Fine-tuning of fonts, spacing, and chat-bubble colors lives in the
+# inline CSS at the top of app.py.
+
+[theme]
+base = "light"
+primaryColor = "#2563eb"
+backgroundColor = "#fafafa"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1a1a1a"
+font = "sans serif"
+
+[server]
+runOnSave = false
