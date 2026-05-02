@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import os
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -327,6 +328,48 @@ def test_flow_unknown_printer_sovol_inferred_as_fdm():
         assert not any(s in recent_assistant_text for s in refusal_signals), (
             f"Agent should not refuse on unknown printer. Got: {recent_assistant_text}"
         )
+
+
+@pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason=SKIP_REASON)
+def test_flow_snap_on_bottle_holder_continuous_bar():
+    """Continuous roll bar → agent must propose a non-zero clamp opening
+    angle and generate a C-clamp variant. The default 120° snap-fit is
+    fine; any value > 0 in the final params satisfies the spec."""
+    agent = Agent(output_dir="output")
+    turn = _drive(
+        agent,
+        opener=(
+            "I need a bottle holder for my Power Wheels — the bottle is 63mm "
+            "wide. The roll bar is continuous, welded at both ends, so I "
+            "can't slide the holder on. It needs to snap on from the side. "
+            "Bar is 28mm and round."
+        ),
+        scripted_replies=[
+            "Elegoo Centauri Carbon with PLA.",
+            "120mm tall, 66mm cup ID, defaults for everything else, generate.",
+            "Yes, generate it now.",
+            "Yes, snap-on, generate.",
+        ],
+    )
+    assert turn.generated_part is not None, (
+        f"Snap-on bottle holder did not generate. Last text: {turn.text[:300]}"
+    )
+    gp = turn.generated_part
+    assert gp.template_name == "bottle_holder"
+    angle = getattr(gp.params, "clamp_opening_angle_deg", None)
+    assert angle is not None, "params must expose clamp_opening_angle_deg"
+    assert angle > 0, (
+        f"snap-on flow must produce a non-zero clamp opening angle; got {angle}"
+    )
+    # And the geometry must reflect it — open volume is less than closed.
+    from templates.bottle_holder import BottleHolderParams, make_bottle_holder
+    closed_volume = make_bottle_holder(
+        BottleHolderParams(**{**asdict(gp.params), "clamp_opening_angle_deg": 0.0})
+    ).volume
+    assert gp.part.volume < closed_volume - 100, (
+        f"open clamp ({angle}°) volume {gp.part.volume} must be meaningfully less than "
+        f"closed reference {closed_volume}"
+    )
 
 
 @pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason=SKIP_REASON)

@@ -131,13 +131,30 @@ _PAGE_CSS = """
   }
 
   /* --- 4. Empty-state hint --------------------------------------------- */
+  /* Centered prompt shown before the first part is generated. The viewport
+     frame is min-height 540px, so we use a flex wrapper to vertically
+     center the hint inside it. Larger and darker than the previous
+     bottom-corner placement so it doesn't disappear on small screens. */
+  .empty-hint-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 480px;
+    padding: 20px;
+  }
   .empty-hint {
-    color: #9a9a9a;
-    font-style: italic;
-    font-size: 14px;
+    color: #6b7280;
+    font-size: 16px;
     text-align: center;
-    padding: 220px 20px;
+    max-width: 320px;
+    line-height: 1.5;
     user-select: none;
+  }
+  .empty-hint .emoji {
+    display: block;
+    font-size: 32px;
+    margin-bottom: 10px;
+    opacity: 0.6;
   }
 
   /* --- 5. Chat bubbles + header ---------------------------------------- */
@@ -156,6 +173,36 @@ _PAGE_CSS = """
 
   .chat-header {display: flex; align-items: center; padding: 4px 0 8px 0;}
   .chat-header .title {font-weight: 600; color: #1a1a1a;}
+
+  /* Responsive chat history height — fills the gap between page header
+     and chat input, scrolls inside instead of pushing the input out of
+     the viewport on short laptop screens. min-height keeps it usable
+     even when stacked with sidebar content. */
+  [class*="st-key-chat-history"] {
+    max-height: calc(100vh - 320px);
+    min-height: 320px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+
+  /* Chat input — make it read as an interactive field, not a vague gray
+     band. Rounded border, subtle focus ring, and a placeholder color
+     dark enough to read. */
+  [data-testid="stChatInput"] {
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #ffffff;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  }
+  [data-testid="stChatInput"]:focus-within {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+  }
+  [data-testid="stChatInput"] textarea::placeholder,
+  [data-testid="stChatInputTextArea"]::placeholder {
+    color: #6b7280;
+    opacity: 1;
+  }
 
   /* --- 6. Model indicator (SHOW_MODEL=1 only) -------------------------- */
   .model-pill {
@@ -253,10 +300,15 @@ def _bottle_holder_sliders(defaults: BottleHolderParams) -> BottleHolderParams:
     standoff = st.slider("Standoff (mm)", 10.0, 100.0, defaults.standoff, 1.0)
     arm_width = st.slider("Arm width (mm)", 5.0, 60.0, defaults.arm_width, 1.0)
     wall_t = st.slider("Wall thickness (mm)", 1.0, 5.0, defaults.wall_t, 0.1)
+    clamp_opening_angle_deg = st.slider(
+        "Clamp opening angle (° on side opposite the arm; 0 = closed ring, 120 = snap-on)",
+        0, 180, int(round(defaults.clamp_opening_angle_deg)), 10,
+    )
     return BottleHolderParams(
         bottle_dia=bottle_dia, cup_id=cup_id, cup_height=cup_height, wall_t=wall_t,
         drain_dia=drain_dia, bar_dia=bar_dia, clamp_height=clamp_height,
         slot_width=slot_width, standoff=standoff, arm_width=arm_width,
+        clamp_opening_angle_deg=float(clamp_opening_angle_deg),
     )
 
 
@@ -326,10 +378,14 @@ def _fmt(value_mm: float, unit: str, decimals: int | None = None) -> str:
 
 def _key_dimensions(template_name: str, params, unit: str) -> str:
     if template_name == "bottle_holder":
-        return (
+        line = (
             f"cup {_fmt(params.cup_id, unit)} × {_fmt(params.cup_height, unit)} tall · "
             f"clamps {_fmt(params.bar_dia, unit)} bar"
         )
+        opening = getattr(params, "clamp_opening_angle_deg", 0.0)
+        if opening and opening > 0:
+            line += f" (snap-on, {int(round(opening))}° open)"
+        return line
     if template_name == "hook":
         if params.mount_type == "bar":
             return (
@@ -539,7 +595,7 @@ with chat_col:
             st.session_state.model_counts = {m: 0 for m in ALL_MODELS}
             st.rerun()
 
-    chat_container = st.container(height=540)
+    chat_container = st.container(key="chat-history")
 
     with chat_container:
         if not st.session_state.chat_log:
@@ -611,9 +667,20 @@ with viewport_col:
                 unsafe_allow_html=True,
             )
 
-        # Empty viewport frame: just a centered hint plus the corner triad.
+        # Empty viewport frame: centered hint inside the keyed frame, plus
+        # the persistent corner triad in the lower-left.
         with st.container(key="viewport-frame"):
-            st.html('<div class="empty-hint">← Describe what you\'d like to make</div>')
+            st.html(
+                """
+                <div class="empty-hint-wrap">
+                  <div class="empty-hint">
+                    <span class="emoji">⌨️</span>
+                    Tell the assistant on the left what you'd like to make.
+                    Your part will appear here.
+                  </div>
+                </div>
+                """
+            )
             st.html(f'<div class="axes-overlay">{_CORNER_TRIAD_SVG}</div>')
 
     else:

@@ -33,9 +33,13 @@ TEMPLATE_HINTS: dict[str, list[tuple[str, str]]] = {
         ("wall_t", "wall thickness; production method dictates the floor here"),
         ("drain_dia", "drainage hole diameter at the cup floor (default is fine)"),
         ("clamp_height", "vertical extent of the C-clamp (default is fine)"),
-        ("slot_width", "tightening slot width (default is fine)"),
+        ("slot_width", "tightening slot width (default is fine; ignored when clamp_opening_angle_deg > 0)"),
         ("standoff", "horizontal gap between cup and clamp (default is fine)"),
         ("arm_width", "vertical width of the standoff arm (default is fine)"),
+        (
+            "clamp_opening_angle_deg",
+            "angular opening of the clamp on the side opposite the arm. 0 (default) = closed ring with a thin tightening slot, slides on from the bar's end. 90 = quarter-turn open. 120 = snap-fit (recommended when the user says they need to snap it on from the side). 180 = fully open C-clamp.",
+        ),
     ],
     "hook": [
         ("mount_type", "'flat' = screws to a flat wall surface; 'bar' = clamps around a horizontal pipe/bar"),
@@ -171,6 +175,17 @@ The bottle holder's clamp is a **circular C-clamp** — it only fits round bars 
   Do NOT silently generate the round clamp on a non-round surface. Do NOT bury the warning two paragraphs later. Surface it before any further parameter intake.
 
 If the user is describing something where the cross-section is genuinely ambiguous ("a bar on my treadmill"), ask once: "Is the bar round, or is it more square/rectangular?"
+
+## How the clamp goes onto the bar (bottle holder only)
+
+The bottle holder has two ways to attach to a bar, controlled by `clamp_opening_angle_deg`:
+
+- **Closed ring with tightening slot** (`clamp_opening_angle_deg = 0`, default). The clamp is a full circular ring. The user has to slide it onto the bar from one end — works when the bar has accessible ends, like a removable handlebar, a stroller frame end, a treadmill grip with a free end.
+- **Open C-clamp / snap-on** (`clamp_opening_angle_deg > 0`). The clamp has an angular gap on the side opposite the arm. The user pushes it sideways onto the bar — works when the bar's ends are NOT accessible (a continuous roll bar, a closed loop, a bar welded at both ends, a thick frame member that loops back into the structure).
+
+During parameter intake for the bottle holder, ask once — naturally, not as a form: *"Will the bar's ends be accessible so you can slide the holder on, or does it need to snap on from the side?"* If the user signals snap-on (continuous bar, "loops around", "welded ends", "can't slide it on", "from the side"), set `clamp_opening_angle_deg = 120` as the default — that's a snap-fit that grips well. Use 90 for a milder opening if they want it less open, or 180 if they describe needing to drop the bar straight in.
+
+If the user says "Power Wheels roll bar" or anything that sounds like a continuous welded bar, lean toward proposing snap-on without making them describe it twice. If they say they can take the bar off / unscrew the cap / it has a free end, leave the default closed ring.
 
 ## Production-method rules of thumb (for your suggestions and pushback)
 

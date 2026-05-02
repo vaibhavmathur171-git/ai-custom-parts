@@ -9,6 +9,7 @@ Geometry consists of three regions:
 All regions are boolean-unioned into a single solid.
 """
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from build123d import *
@@ -28,6 +29,11 @@ class BottleHolderParams:
     slot_width: float = 4.0       # Tightening slot width in mm
     standoff: float = 40.0        # Cup-to-clamp horizontal gap in mm
     arm_width: float = 20.0       # Standoff arm cross-section width in mm
+    # Angular opening of the clamp on the side opposite the arm. 0 = closed
+    # ring (with the existing thin tightening slot). >0 cuts a sector of
+    # this many degrees so the clamp can snap onto a continuous bar from
+    # the side. 120° is a typical snap-fit; 180° is a fully open C.
+    clamp_opening_angle_deg: float = 0.0
 
     def validate(self) -> list[str]:
         """Validate parameters and return list of error messages."""
@@ -50,6 +56,15 @@ class BottleHolderParams:
         # Minimum cup height
         if self.cup_height < 40.0:
             errors.append(f"cup_height ({self.cup_height}mm) must be >= 40mm for meaningful grip")
+
+        # Opening angle bounds. 0 = closed ring; 180 = half-circle C-clamp.
+        # Anything outside this range either makes no geometric sense (>180
+        # would carve into the side that holds the arm) or is negative.
+        if not (0.0 <= self.clamp_opening_angle_deg <= 180.0):
+            errors.append(
+                f"clamp_opening_angle_deg ({self.clamp_opening_angle_deg}°) "
+                f"must be in [0, 180]"
+            )
 
         return errors
 
@@ -108,15 +123,35 @@ def make_bottle_holder(params: BottleHolderParams) -> Part:
 
     # Region 2: Clamp — C-ring with axis along Y.
     # Sketch the C profile in the XZ plane, then extrude symmetrically along Y.
-    # Slot is on the +X face of the clamp (the side facing AWAY from the cup).
+    # The arm meets the clamp on the -X side, so the opening (slot OR sector
+    # cut) goes on +X — that way the bar bears against the closed -X side
+    # near the arm for maximum grip.
     with BuildPart() as clamp_part:
         with BuildSketch(Plane.XZ):
             Circle(clamp_od / 2)
             Circle(params.bar_dia / 2, mode=Mode.SUBTRACT)
-            # Vertical slot through the +X wall: width slot_width along Z (vertical),
-            # length clamp_od along X (cuts cleanly through the wall).
-            with Locations((clamp_od / 2, 0)):
-                Rectangle(clamp_od, params.slot_width, mode=Mode.SUBTRACT)
+            if params.clamp_opening_angle_deg > 0.0:
+                # Snap-on C-clamp: cut an angular sector centered on +X.
+                # The sector is approximated by a polygon — origin + N
+                # samples around the outer arc — so build123d's planar
+                # boolean handles it cleanly. align=None keeps coordinates
+                # absolute (Polygon's default re-centers around the
+                # bounding box, which would slide the cut off-axis).
+                half_a = math.radians(params.clamp_opening_angle_deg / 2.0)
+                R = clamp_od / 2 + overlap
+                N = 32  # arc smoothness
+                arc_pts = [
+                    (R * math.cos(-half_a + (2 * half_a) * i / N),
+                     R * math.sin(-half_a + (2 * half_a) * i / N))
+                    for i in range(N + 1)
+                ]
+                wedge_pts = [(0.0, 0.0), *arc_pts]
+                Polygon(*wedge_pts, mode=Mode.SUBTRACT, align=None)
+            else:
+                # Closed ring with a thin tightening slot on +X (so a screw
+                # can pull it shut).
+                with Locations((clamp_od / 2, 0)):
+                    Rectangle(clamp_od, params.slot_width, mode=Mode.SUBTRACT)
         extrude(amount=params.clamp_height / 2, both=True)
 
     # Place clamp so its axis is along Y at (clamp_x, *, arm_z).

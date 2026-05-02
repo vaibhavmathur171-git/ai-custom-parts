@@ -77,3 +77,78 @@ def test_registry_has_three_templates():
     assert set(names) == {"bottle_holder", "hook", "bracket"}, (
         f"Unexpected template set: {names}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Bottle holder clamp_opening_angle_deg modifier (Step 5C)
+# ---------------------------------------------------------------------------
+
+
+def test_bottle_holder_default_is_closed_clamp():
+    """clamp_opening_angle_deg defaults to 0 (closed ring) — backwards
+    compatibility with Steps 1-5B."""
+    from templates.bottle_holder import BottleHolderParams
+    assert BottleHolderParams().clamp_opening_angle_deg == 0.0
+
+
+def test_bottle_holder_validates_clamp_opening_bounds():
+    """[0, 180] inclusive; anything outside must surface a validation error."""
+    from templates.bottle_holder import BottleHolderParams
+    assert BottleHolderParams(clamp_opening_angle_deg=0).validate() == []
+    assert BottleHolderParams(clamp_opening_angle_deg=180).validate() == []
+    assert BottleHolderParams(clamp_opening_angle_deg=120).validate() == []
+    bad_low = BottleHolderParams(clamp_opening_angle_deg=-1).validate()
+    bad_high = BottleHolderParams(clamp_opening_angle_deg=181).validate()
+    assert any("clamp_opening" in e for e in bad_low), bad_low
+    assert any("clamp_opening" in e for e in bad_high), bad_high
+
+
+@pytest.mark.parametrize("angle", [90.0, 120.0, 180.0])
+def test_bottle_holder_open_clamp_produces_smaller_volume(angle, tmp_path):
+    """Opening the clamp must remove material (volume strictly less than
+    closed) and the cut must be on the +X side opposite the standoff arm
+    (so the bbox max-X shrinks while min-X is unchanged)."""
+    from templates.bottle_holder import BottleHolderParams, make_bottle_holder
+
+    closed = make_bottle_holder(BottleHolderParams())
+    open_part = make_bottle_holder(BottleHolderParams(clamp_opening_angle_deg=angle))
+
+    assert open_part.volume < closed.volume, (
+        f"opening={angle}°: volume {open_part.volume} should be < closed {closed.volume}"
+    )
+
+    # Cut is on the +X side opposite the arm, so bbox max.X shrinks while
+    # min.X (the cup's far -X edge) stays put.
+    closed_bb = closed.bounding_box()
+    open_bb = open_part.bounding_box()
+    assert open_bb.max.X < closed_bb.max.X - 0.01, (
+        f"opening={angle}°: max.X should shrink from {closed_bb.max.X} to less"
+    )
+    assert abs(open_bb.min.X - closed_bb.min.X) < 0.01, (
+        f"opening={angle}°: min.X (cup side) should be unchanged"
+    )
+
+    # Larger angle = more material removed.
+    if angle > 90:
+        smaller = make_bottle_holder(BottleHolderParams(clamp_opening_angle_deg=90))
+        assert open_part.volume < smaller.volume, (
+            f"opening={angle}° must remove more than 90°"
+        )
+
+
+def test_bottle_holder_open_clamp_passes_manufacturing_checks():
+    """A typical snap-on bottle holder (FDM PLA, 120° open) must produce a
+    sensible run_checks output with no FAIL — the opening doesn't introduce
+    geometry that the existing checks should reject."""
+    from manufacturing.checks import run_checks
+    from manufacturing.context import Method, ProductionContext
+    from templates.bottle_holder import BottleHolderParams, make_bottle_holder
+
+    params = BottleHolderParams(clamp_opening_angle_deg=120.0)
+    part = make_bottle_holder(params)
+    ctx = ProductionContext(method=Method.FDM, material="PLA", nozzle_dia=0.4)
+    results = run_checks("bottle_holder", params, part, ctx)
+    statuses = [r.status for r in results]
+    assert "fail" not in statuses, (
+        f"snap-on bottle holder must not FAIL any check; got {[(r.name, r.status) for r in results]}"
+    )
