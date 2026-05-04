@@ -873,3 +873,22 @@ if prompt is not None:
 
             st.session_state.chat_log.append(assistant_entry)
             st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Attribution footer
+# ---------------------------------------------------------------------------
+
+st.markdown(
+    """
+    <div style="text-align: left; padding: 24px 0 16px 0; color: #6b7280; font-size: 13px;">
+      Built by Vaibhav Mathur &nbsp;·&nbsp;
+      <a href="https://www.linkedin.com/in/mathurmems/" target="_blank" style="color: #6b7280; text-decoration: none;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">LinkedIn</a>
+      &nbsp;·&nbsp;
+      <a href="https://x.com/vaibhavmathur" target="_blank" style="color: #6b7280; text-decoration: none;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">X</a>
+      &nbsp;·&nbsp;
+      <a href="https://github.com/vaibhavmathur171-git/ai-custom-parts" target="_blank" style="color: #6b7280; text-decoration: none;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">GitHub</a>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
