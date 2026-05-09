@@ -174,21 +174,18 @@ _PAGE_CSS = """
   .chat-header {display: flex; align-items: center; padding: 4px 0 8px 0;}
   .chat-header .title {font-weight: 600; color: #1a1a1a;}
 
-  /* Fixed-height chat subwindow — forces a bounded box regardless of
-     message count. !important overrides Streamlit's own height:auto on
-     its internal wrapper divs. The three selectors cover the outer
-     container, the BorderWrapper, and the VerticalBlock — all must be
-     height-constrained for overflow-y:auto to actually scroll. */
+  /* Fixed-height chat subwindow — bounded box, scrolls internally so
+     the page itself never grows. !important is required to override
+     Streamlit's own .stVerticalBlock height/overflow styles (the
+     keyed container IS a stVerticalBlock, so unprefixed rules lose
+     the specificity battle). Scope is the outer container ONLY —
+     drilling into descendants matches nested blocks inside chat
+     messages and gives every bubble its own scrollbar. */
   [class*="st-key-chat-history"] {
     height: calc(100vh - 320px) !important;
     min-height: 320px !important;
-    overflow: hidden !important;
-  }
-  [class*="st-key-chat-history"] > div,
-  [class*="st-key-chat-history"] [data-testid="stVerticalBlockBorderWrapper"],
-  [class*="st-key-chat-history"] [data-testid="stVerticalBlock"] {
-    height: 100% !important;
     overflow-y: auto !important;
+    overflow-x: hidden !important;
     padding-right: 4px;
   }
 
