@@ -174,12 +174,11 @@ _PAGE_CSS = """
   .chat-header {display: flex; align-items: center; padding: 4px 0 8px 0;}
   .chat-header .title {font-weight: 600; color: #1a1a1a;}
 
-  /* Responsive chat history height — fills the gap between page header
-     and chat input, scrolls inside instead of pushing the input out of
-     the viewport on short laptop screens. min-height keeps it usable
-     even when stacked with sidebar content. */
+  /* Fixed-height chat subwindow — the chat scrolls internally so the
+     page itself never moves. height (not max-height) keeps it constant
+     regardless of message count. min-height guards very short screens. */
   [class*="st-key-chat-history"] {
-    max-height: calc(100vh - 320px);
+    height: calc(100vh - 320px);
     min-height: 320px;
     overflow-y: auto;
     padding-right: 4px;
@@ -635,6 +634,17 @@ with chat_col:
                         f'<span class="model-pill">🧠 {short}</span>',
                         unsafe_allow_html=True,
                     )
+
+    # Scroll the chat subwindow to the bottom after each render so new
+    # messages are visible without the page itself moving.
+    st.html(
+        "<script>"
+        "setTimeout(function(){"
+        "var e=document.querySelector('[class*=\"st-key-chat-history\"]');"
+        "if(e)e.scrollTop=e.scrollHeight;"
+        "},50);"
+        "</script>"
+    )
 
     prompt = st.chat_input(
         "Describe what you'd like to make (you can attach a photo)",
