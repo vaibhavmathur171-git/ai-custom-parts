@@ -174,19 +174,14 @@ _PAGE_CSS = """
   .chat-header {display: flex; align-items: center; padding: 4px 0 8px 0;}
   .chat-header .title {font-weight: 600; color: #1a1a1a;}
 
-  /* Fixed-height chat subwindow — bounded box, scrolls internally so
-     the page itself never grows. !important is required to override
-     Streamlit's own .stVerticalBlock height/overflow styles (the
-     keyed container IS a stVerticalBlock, so unprefixed rules lose
-     the specificity battle). Scope is the outer container ONLY —
-     drilling into descendants matches nested blocks inside chat
-     messages and gives every bubble its own scrollbar. */
+  /* Make the natively-scrollable chat container responsive. The
+     `st.container(height=520, ...)` call in app.py creates the fixed-
+     height bounded box (Streamlit handles the scroll mechanics); this
+     rule just swaps the static 520px for a viewport-relative height
+     so the panel grows on tall screens and shrinks on short ones. */
   [class*="st-key-chat-history"] {
     height: calc(100vh - 320px) !important;
     min-height: 320px !important;
-    overflow-y: auto !important;
-    overflow-x: hidden !important;
-    padding-right: 4px;
   }
 
   /* Chat input — make it read as an interactive field, not a vague gray
@@ -599,7 +594,10 @@ with chat_col:
             st.session_state.model_counts = {m: 0 for m in ALL_MODELS}
             st.rerun()
 
-    chat_container = st.container(key="chat-history")
+    # Native fixed-height container — Streamlit handles the inner scroll
+    # mechanics properly (no CSS hacks). The pixel value is overridden by
+    # the .st-key-chat-history rule below to be viewport-responsive.
+    chat_container = st.container(key="chat-history", height=520, border=False)
 
     with chat_container:
         if not st.session_state.chat_log:
