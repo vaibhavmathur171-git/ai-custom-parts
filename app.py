@@ -174,16 +174,18 @@ _PAGE_CSS = """
   .chat-header {display: flex; align-items: center; padding: 4px 0 8px 0;}
   .chat-header .title {font-weight: 600; color: #1a1a1a;}
 
-  /* Make the natively-scrollable chat container responsive. The
-     `st.container(height=520, ...)` call in app.py creates the fixed-
-     height bounded box (Streamlit handles the scroll mechanics); this
-     rule just swaps the static 520px for a viewport-relative height
-     so the panel grows on tall screens and shrinks on short ones. The
-     larger subtraction here vs the original 320 accounts for the
-     demo-scope panel sitting above the chat. */
+  /* Chat history: visibly bounded scroll panel. The native
+     st.container(height=N, ...) provides the scroll mechanics; CSS
+     adds the border + bg so the empty space reads clearly as "chat
+     area" rather than dead space, and clamps height between min/max
+     so the panel works on small laptops and big desktops alike. */
   [class*="st-key-chat-history"] {
-    height: calc(100vh - 520px) !important;
-    min-height: 280px !important;
+    height: calc(100vh - 460px) !important;
+    min-height: 260px !important;
+    max-height: 520px !important;
+    border: 1px solid #e5e7eb !important;
+    border-radius: 10px !important;
+    background: #ffffff !important;
   }
 
   /* --- 8. Demo-scope notice (sits above the chat) --------------------- */
@@ -194,45 +196,61 @@ _PAGE_CSS = """
     background: #f9fafb;
     border: 1px solid #e5e7eb;
     border-radius: 8px;
-    padding: 12px 14px;
-    margin-bottom: 12px;
-    font-size: 12.5px;
+    padding: 9px 12px;
+    margin-bottom: 10px;
+    font-size: 12px;
     color: #4b5563;
-    line-height: 1.5;
+    line-height: 1.45;
   }
   .demo-scope .label {
     font-weight: 600;
     color: #1f2937;
   }
   .demo-scope p {
-    margin: 0 0 8px 0;
+    margin: 0 0 6px 0;
   }
   .demo-scope ul {
-    margin: 4px 0 0 0;
-    padding-left: 18px;
+    margin: 3px 0 0 0;
+    padding-left: 16px;
   }
   .demo-scope li {
-    margin-bottom: 3px;
+    margin-bottom: 2px;
     font-style: italic;
   }
 
-  /* Chat input — make it read as an interactive field, not a vague gray
-     band. Rounded border, subtle focus ring, and a placeholder color
-     dark enough to read. */
+  /* Chat input — primary action target. Stronger border + subtle
+     elevation so it visibly invites typing, hover/focus states for
+     feedback, and a darker, slightly heavier placeholder so the
+     prompt instruction is unmistakable on first load. */
   [data-testid="stChatInput"] {
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
+    border: 1.5px solid #94a3b8;
+    border-radius: 10px;
     background: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  }
+  [data-testid="stChatInput"]:hover {
+    border-color: #60a5fa;
   }
   [data-testid="stChatInput"]:focus-within {
     border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
   }
   [data-testid="stChatInput"] textarea::placeholder,
   [data-testid="stChatInputTextArea"]::placeholder {
-    color: #6b7280;
+    color: #475569;
     opacity: 1;
+    font-weight: 500;
+  }
+  /* Small hint label above the chat input — points the eye to the
+     primary action target on first load so VC/partner users don't
+     have to hunt for where to type. */
+  .chat-input-hint {
+    color: #6b7280;
+    font-size: 11.5px;
+    font-weight: 500;
+    margin: 6px 0 4px 2px;
+    letter-spacing: 0.02em;
   }
 
   /* --- 6. Model indicator (SHOW_MODEL=1 only) -------------------------- */
@@ -696,8 +714,12 @@ with chat_col:
         "</script>"
     )
 
+    st.markdown(
+        '<div class="chat-input-hint">Type your request below ↓</div>',
+        unsafe_allow_html=True,
+    )
     prompt = st.chat_input(
-        "Describe what you'd like to make (you can attach a photo)",
+        "e.g. I need a bottle holder for a 25mm round bar",
         accept_file=True,
         file_type=ACCEPTED_IMAGE_TYPES,
         disabled=st.session_state.agent is None,
