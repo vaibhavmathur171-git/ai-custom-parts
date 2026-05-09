@@ -178,10 +178,42 @@ _PAGE_CSS = """
      `st.container(height=520, ...)` call in app.py creates the fixed-
      height bounded box (Streamlit handles the scroll mechanics); this
      rule just swaps the static 520px for a viewport-relative height
-     so the panel grows on tall screens and shrinks on short ones. */
+     so the panel grows on tall screens and shrinks on short ones. The
+     larger subtraction here vs the original 320 accounts for the
+     demo-scope panel sitting above the chat. */
   [class*="st-key-chat-history"] {
-    height: calc(100vh - 320px) !important;
-    min-height: 320px !important;
+    height: calc(100vh - 520px) !important;
+    min-height: 280px !important;
+  }
+
+  /* --- 8. Demo-scope notice (sits above the chat) --------------------- */
+  /* Sets expectations for VCs / AI fund partners trying the prototype:
+     the system is intentionally template-constrained, not freehand
+     CAD generation. Compact card styling — informational, not loud. */
+  .demo-scope {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    font-size: 12.5px;
+    color: #4b5563;
+    line-height: 1.5;
+  }
+  .demo-scope .label {
+    font-weight: 600;
+    color: #1f2937;
+  }
+  .demo-scope p {
+    margin: 0 0 8px 0;
+  }
+  .demo-scope ul {
+    margin: 4px 0 0 0;
+    padding-left: 18px;
+  }
+  .demo-scope li {
+    margin-bottom: 3px;
+    font-style: italic;
   }
 
   /* Chat input — make it read as an interactive field, not a vague gray
@@ -579,6 +611,21 @@ chat_col, viewport_col = st.columns([3, 7], gap="medium")
 # --- Chat column (LEFT) ---------------------------------------------------
 
 with chat_col:
+    st.markdown(
+        """
+        <div class="demo-scope">
+          <p><span class="label">Demo scope.</span> This prototype showcases three template archetypes — bottle holders, J-hooks, and L-brackets — across six manufacturing methods. Constrained-template architecture by design (LLM never freehand-generates geometry; templates guarantee manufacturability). Library expansion is the roadmap.</p>
+          <span class="label">Try one of these:</span>
+          <ul>
+            <li>"I need a bottle holder for my daughter's Power Wheels — the bar is round, about 25mm"</li>
+            <li>"Make me a J-hook to hang a 5lb plant from a wooden ceiling joist"</li>
+            <li>"L-bracket to mount a small shelf under my desk, max load 10kg"</li>
+          </ul>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     header_cols = st.columns([5, 1], vertical_alignment="center")
     with header_cols[0]:
         st.markdown(
