@@ -174,13 +174,21 @@ _PAGE_CSS = """
   .chat-header {display: flex; align-items: center; padding: 4px 0 8px 0;}
   .chat-header .title {font-weight: 600; color: #1a1a1a;}
 
-  /* Fixed-height chat subwindow — the chat scrolls internally so the
-     page itself never moves. height (not max-height) keeps it constant
-     regardless of message count. min-height guards very short screens. */
+  /* Fixed-height chat subwindow — forces a bounded box regardless of
+     message count. !important overrides Streamlit's own height:auto on
+     its internal wrapper divs. The three selectors cover the outer
+     container, the BorderWrapper, and the VerticalBlock — all must be
+     height-constrained for overflow-y:auto to actually scroll. */
   [class*="st-key-chat-history"] {
-    height: calc(100vh - 320px);
-    min-height: 320px;
-    overflow-y: auto;
+    height: calc(100vh - 320px) !important;
+    min-height: 320px !important;
+    overflow: hidden !important;
+  }
+  [class*="st-key-chat-history"] > div,
+  [class*="st-key-chat-history"] [data-testid="stVerticalBlockBorderWrapper"],
+  [class*="st-key-chat-history"] [data-testid="stVerticalBlock"] {
+    height: 100% !important;
+    overflow-y: auto !important;
     padding-right: 4px;
   }
 
