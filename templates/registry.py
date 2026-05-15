@@ -18,7 +18,7 @@ from typing import Callable, Type
 
 from build123d import Part
 
-from templates import bottle_holder, bracket, hook
+from templates import bottle_holder, bracket, hook, paper_towel_holder
 
 
 @dataclass(frozen=True)
@@ -56,6 +56,11 @@ for _spec_obj in (
     _spec(bottle_holder, bottle_holder.BottleHolderParams, bottle_holder.make_bottle_holder),
     _spec(hook, hook.HookParams, hook.make_hook),
     _spec(bracket, bracket.BracketParams, bracket.make_bracket),
+    _spec(
+        paper_towel_holder,
+        paper_towel_holder.PaperTowelHolderParams,
+        paper_towel_holder.make_paper_towel_holder,
+    ),
 ):
     _REGISTRY[_spec_obj.name] = _spec_obj
 
