@@ -89,10 +89,27 @@ Read templates/bottle_holder.py fully. Note the file structure:
 
 Also read templates/registry.py to understand the registration pattern.
 
-### Step 5 — Research (optional)
-If the request involves dimensions you're not confident about (e.g., standard pegboard hole spacing, common screw sizes, typical drill bit dimensions), perform AT MOST 3 web searches on engineering reference sites or standards documents.
+### Step 5 — Invoke mfg-consultant for a manufacturing briefing
 
-Note each value you find and its source — these will go in the PR description as ASSUMED values for the founder to verify.
+ALWAYS invoke the mfg-consultant subagent before drafting geometry.
+
+Construct a briefing request that includes:
+- The user's original request (verbatim quote)
+- The template you're drafting (snake_case name)
+- The printer the user named, if any
+- The specific manufacturing questions you need answered
+
+Invoke mfg-consultant. It will return a structured briefing.
+
+Read the briefing carefully. The briefing contains:
+- Recommended primary and alternative manufacturing methods
+- Printer-specific notes (if a printer was named)
+- Parameter recommendations with cited sources and confidence levels
+- Known unknowns and source conflicts
+
+You will EMBED this briefing verbatim in the PR description in Step 9.
+
+If mfg-consultant returns a briefing that flags the request is out of scope (CNC/injection molding), STOP. Move the request to feedback/done/ with a decision.txt explaining "manufacturing scope mismatch — handle manually."
 
 ### Step 6 — Draft the template file
 Create templates/<snake_case_name>.py following the EXACT pattern from bottle_holder.py:
@@ -141,6 +158,10 @@ The PR body should contain these sections:
 
 **Original request**
 (quote the user's text verbatim)
+
+**Manufacturing briefing**
+
+[Embed the mfg-consultant briefing here, verbatim, with the surrounding `---` markers.]
 
 **What I drafted**
 - New file: templates/<name>.py
